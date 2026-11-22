@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitHub Uploader</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1a1d21;--mut:#6b7280;--bd:#d9dde3;--ac:#238636;--ac2:#1f6feb}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1117;--card:#161b22;--tx:#e6edf3;--mut:#8b949e;--bd:#30363d;--ac:#2ea043;--ac2:#58a6ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;padding:16px}
+.w{max-width:560px;margin:0 auto}
+h1{font-size:20px;margin:4px 0 14px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--mut);margin:8px 0 3px}
+input[type=text],input[type=password]{width:100%;padding:9px 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font-size:15px}
+.r{display:flex;gap:8px}.r>div{flex:1}
+#drop{border:2px dashed var(--bd);border-radius:12px;padding:22px 12px;text-align:center;color:var(--mut)}
+#drop.o{border-color:var(--ac2);color:var(--ac2)}
+button{border:0;border-radius:8px;padding:10px 14px;font-size:15px;cursor:pointer;background:var(--bd);color:var(--tx)}
+button.p{background:var(--ac);color:#fff;width:100%;font-weight:600;margin-top:6px}
+button:disabled{opacity:.5}
+.b{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+#ls{max-height:160px;overflow:auto;font-size:13px;color:var(--mut);margin-top:8px;word-break:break-all}
+#lg{white-space:pre-wrap;font:12px/1.5 ui-monospace,monospace;color:var(--mut);max-height:180px;overflow:auto}
+.s{font-size:12px;color:var(--mut)}
+a{color:var(--ac2)}
+</style>
+</head>
+<body>
+<div class="w">
+<h1>⬆️ GitHub Uploader</h1>
+
+<div class="c">
+  <label>Personal Access Token (izin: Contents → Read &amp; write)</label>
+  <input type="password" id="tk" placeholder="ghp_… / github_pat_…">
+  <div class="r">
+    <div><label>Repo (user/nama-repo)</label><input type="text" id="rp" placeholder="budi/proyek-saya"></div>
+    <div><label>Branch</label><input type="text" id="br" value="main"></div>
+  </div>
+  <label>Folder tujuan di repo (opsional)</label>
+  <input type="text" id="dr" placeholder="kosongkan = root">
+  <label style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="sv" checked> Ingat token &amp; repo di browser ini</label>
+</div>
+
+<div class="c">
+  <div id="drop">Seret file / folder / ZIP ke sini<br><span class="s">ZIP otomatis di-extract</span></div>
+  <div class="b">
+    <button id="bf">Pilih File</button>
+    <button id="bd">Pilih Folder</button>
+    <button id="bc">Kosongkan</button>
+  </div>
+  <input type="file" id="fi" multiple hidden>
+  <input type="file" id="di" webkitdirectory hidden>
+  <label style="display:flex;gap:6px;align-items:center;margin-top:10px"><input type="checkbox" id="st"> Hilangkan folder induk tunggal di dalam ZIP</label>
+  <div id="ls"></div>
+  <button class="p" id="go" disabled>Upload ke GitHub</button>
+</div>
+
+<div class="c"><div id="lg">Log akan muncul di sini.</div></div>
+<p class="s">Token hanya dikirim ke api.github.com dari browser Anda. Repo harus sudah punya minimal 1 commit. File maksimal ±100 MB per file.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+let items=[];
+const log=m=>{const l=$('lg');l.textContent+=(l.textContent==='Log akan muncul di sini.'?'':'\n')+m;if(l.textContent.startsWith('\n'))l.textContent=l.textContent.slice(1);l.scrollTop=1e9};
+try{const s=JSON.parse(localStorage.getItem('ghu')||'{}');if(s.tk){$('tk').value=s.tk}if(s.rp)$('rp').value=s.rp;if(s.br)$('br').value=s.br;if(s.dr)$('dr').value=s.dr}catch(e){}
+
+function b64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file)})}
+
+function render(){
+  $('ls').innerHTML=items.length?'<b>'+items.length+' file siap diupload</b><br>'+items.slice(0,40).map(i=>i.path.replace(/</g,'&lt;')).join('<br>')+(items.length>40?'<br>…':''):'';
+  $('go').disabled=!items.length;
+}
+
+async function addZip(file){
+  log('Extract: '+file.name);
+  const z=await JSZip.loadAsync(file);
+  let list=[];
+  z.forEach((p,e)=>{if(!e.dir&&!p.startsWith('__MACOSX/')&&!p.endsWith('.DS_Store'))list.push({path:p,get:()=>e.async('base64')})});
+  if($('st').checked&&list.length){
+    const tops=new Set(list.map(i=>i.path.split('/')[0]));
+    if(tops.size===1&&list.every(i=>i.path.includes('/')))list.forEach(i=>i.path=i.path.split('/').slice(1).join('/'));
+  }
+  items.push(...list);
+}
+async function addFile(file,path){
+  if(/\.zip$/i.test(file.name)){try{return await addZip(file)}catch(e){log('Gagal baca ZIP '+file.name+': '+e.message)}}
+  items.push({path:path||file.webkitRelativePath||file.name,get:()=>b64(file)});
+}
+async function walk(entry,base){
+  if(entry.isFile){const f=await new Promise((r,j)=>entry.file(r,j));await addFile(f,base+entry.name)}
+  else if(entry.isDirectory){
+    const rd=entry.createReader();let all=[];
+    while(true){const b=await new Promise((r,j)=>rd.readEntries(r,j));if(!b.length)break;all.push(...b)}
+    for(const e of all)await walk(e,base+entry.name+'/');
+  }
+}
+async function addFiles(fl){for(const f of fl)await addFile(f);render()}
+
+$('bf').onclick=()=>$('fi').click();
+$('bd').onclick=()=>$('di').click();
+$('bc').onclick=()=>{items=[];render()};
+$('fi').onchange=e=>{addFiles([...e.target.files]);e.target.value=''};
+$('di').onchange=e=>{addFiles([...e.target.files]);e.target.value=''};
+const dz=$('drop');
+dz.ondragover=e=>{e.preventDefault();dz.classList.add('o')};
+dz.ondragleave=()=>dz.classList.remove('o');
+dz.ondrop=async e=>{
+  e.preventDefault();dz.classList.remove('o');
+  const its=[...e.dataTransfer.items||[]].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
+  if(its.length){for(const en of its)await walk(en,'')}else await addFiles([...e.dataTransfer.files]);
+  render();
+};
+
+async function gh(path,method='GET',body){
+  const r=await fetch('https://api.github.com/repos/'+$('rp').value.trim()+path,{
+    method,headers:{Authorization:'Bearer '+$('tk').value.trim(),Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json'},
+    body:body?JSON.stringify(body):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error((j.message||r.status)+' ('+method+' '+path.split('/').slice(0,3).join('/')+')');
+  return j;
+}
+
+$('go').onclick=async()=>{
+  const btn=$('go');btn.disabled=true;
+  try{
+    if(!$('tk').value||!/^[^/]+\/[^/]+$/.test($('rp').value.trim()))throw new Error('Isi token dan repo (user/nama-repo) dulu.');
+    try{if($('sv').checked)localStorage.setItem('ghu',JSON.stringify({tk:$('tk').value,rp:$('rp').value,br:$('br').value,dr:$('dr').value}));else localStorage.removeItem('ghu')}catch(e){}
+    const br=$('br').value.trim()||'main';
+    const dir=$('dr').value.trim().replace(/^\/+|\/+$/g,'');
+    log('Mengambil branch '+br+'…');
+    const ref=await gh('/git/ref/heads/'+br);
+    const base=await gh('/git/commits/'+ref.object.sha);
+    const tree=[];let n=0;
+    const queue=[...items];
+    async function worker(){
+      while(queue.length){
+        const it=queue.shift();
+        const blob=await gh('/git/blobs','POST',{content:await it.get(),encoding:'base64'});
+        tree.push({path:(dir?dir+'/':'')+it.path.replace(/^\/+/,''),mode:'100644',type:'blob',sha:blob.sha});
+        btn.textContent='Upload '+(++n)+'/'+items.length+'…';
+      }
+    }
+    await Promise.all([worker(),worker(),worker(),worker()]);
+    log('Membuat commit ('+tree.length+' file)…');
+    const nt=await gh('/git/trees','POST',{base_tree:base.tree.sha,tree});
+    const cm=await gh('/git/commits','POST',{message:'Upload '+tree.length+' file via GitHub Uploader',tree:nt.sha,parents:[ref.object.sha]});
+    await gh('/git/refs/heads/'+br,'PATCH',{sha:cm.sha});
+    log('✅ Selesai! '+tree.length+' file diupload.\nhttps://github.com/'+$('rp').value.trim()+'/tree/'+br);
+    items=[];render();
+  }catch(e){log('❌ '+e.message)}
+  btn.textContent='Upload ke GitHub';btn.disabled=!items.length;
+};
+</script>
+</body>
+</html>
